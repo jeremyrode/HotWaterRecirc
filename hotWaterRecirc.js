@@ -10,13 +10,13 @@ const Sensor = require('ds18b20-raspi');
 process.title = 'HotWaterRecircDaemon';
 
 // If modifying these scopes, delete token.json.
-const SCOPES = ['https://www.googleapis.com/auth/calendar.readonly'];
-const TOKEN_PATH = '/home/pi/token.json';
-const SECRET_PATH = '/home/pi/client_secret.json';
+const SCOPES = ['https://www.googleapis.com/auth/calendar.events.public.readonly'];
+const API_KEY_PATH = '/home/pi/google_api_key.json';
+const MAX_API_ERRORS = 10; // how many API requests to retry if errors
+const API_RETRY_DELAY = 1; //how long in mins to wait between API retries
 const ERR_LOG_FILE = '/home/pi/ErrLogRecirc.txt';
 const TEMP_LOG_FILE = '/home/pi/TempValLogRecirc.txt';
 const DEMAND_LOG_FILE = '/home/pi/DemandLogRecirc.txt';
-const GOOGLE_CAL_ID = 'jecipp6euikf2bvk8m7rjn14co@group.calendar.google.com';
 const CAL_UPDATE_INTERVAL = 120; //How often to poll Goolge canlendar In mins
 const CAL_INTERVAL_OVERLAP = 1; //In mins to be sure we don't miss anything
 const TEMP_UPDATE_INTERVAL = 10; //How often to run temp loop in seconds
@@ -70,46 +70,36 @@ function combinedLog(message) {
   console.log(message);
   errlogfile.write(message + '\n')
 }
-// Google Calendar Functions
-function main(oAuth2Client) { //What to do after authentication
-  planEvents(oAuth2Client); //Do a plan now
-  setInterval(planEvents, CAL_UPDATE_INTERVAL*60000, oAuth2Client); //Replan
-  setInterval(doTempLoop, TEMP_UPDATE_INTERVAL*1000); //Check the temp
-  FlowSensor.watch(demandCallback);
-  combinedLog('New Session');
-}
-// Load client secrets from a local file.
-fs.readFile(SECRET_PATH, (err, clientSecret) => {
+
+
+
+// Load API Key & Cal ID from a local json file
+fs.readFile(API_KEY_PATH, (err, content) => {
   if (err) {
     combinedLog('Error loading client secret file');
     return console.log('Error loading client secret file:', err);
   }
   // Authorize a client with credentials, then call the Google Calendar API.
-  authorize(JSON.parse(clientSecret), main);
-});
-// Authorize a client with credentials, then call the Google Calendar API
-function authorize(credentials, callback) {
-  const {client_secret, client_id, redirect_uris} = credentials.installed;
-  const oAuth2Client = new google.auth.OAuth2(client_id, client_secret, redirect_uris[0]);
-  fs.readFile(TOKEN_PATH, (err, token) => {
-    if (err) {
-      combinedLog('Error loading OAuth Token');
-      return console.log('Error loading OAuth Token:', err);
-    }
-    let parsedToken = JSON.parse(token);
-    oAuth2Client.setCredentials(parsedToken);
-    callback(oAuth2Client);
-  });
-}
+  const obj = JSON.parse(content);
+  planEvents(obj.api_key, obj.google_cal_id); //Do a plan now
+  setInterval(planEvents, UPDATE_INTERVAL*60000, obj.api_key, obj.google_cal_id); //Replan
 
-function planEvents(auth) { //Plan out the current interval
-  const calendar = google.calendar({version: 'v3', auth});
+  planEvents(); //Do a plan now
+  setInterval(planEvents, CAL_UPDATE_INTERVAL*60000); //Replan
+  setInterval(doTempLoop, TEMP_UPDATE_INTERVAL*1000); //Check the temp
+  FlowSensor.watch(demandCallback);
+
+  combinedLog('New Session');
+});
+
+function planEvents(api_key, google_cal_id) { //Plan out the current interval
+  const calendar = google.calendar({version: 'v3', auth: api_key});
   const planStartDate = new Date;
   planStartDate.setSeconds(planStartDate.getSeconds() + 10); //Give us a ten sec delay for causality
   const planEndDate = new Date(planStartDate.getTime()); //Clone current time
   planEndDate.setMinutes(planStartDate.getMinutes() + CAL_UPDATE_INTERVAL + CAL_INTERVAL_OVERLAP); // Next interval
   calendar.events.list({
-    calendarId: GOOGLE_CAL_ID,
+    calendarId: google_cal_id,
     timeMin: planStartDate.toISOString(),
     timeMax: planEndDate.toISOString(),
     maxResults: 10,
@@ -120,16 +110,18 @@ function planEvents(auth) { //Plan out the current interval
       combinedLog('The Google API request returned an error: ' + err);
       errorsInAPI += 1;
       combinedLog('We have ' + errorsInAPI + ' running errors');
-      if (errorsInAPI < 10) { //For now limit us to 10 extra requests
-        setTimeout(planEvents,60000,auth); //Call ourself one min in the future
-        combinedLog('Recall planEvents() in one min');
+      if (errorsInAPI < MAX_API_ERRORS) { //Limit request retries
+        setTimeout(planEvents,API_RETRY_DELAY * 60000,api_key,google_cal_id); //Call ourself in the future
+        combinedLog('Will Recall planEvents()');
+      }
+      else {
+        combinedLog('We gave up on this planning interval due to excess retries');
       }
       return; //don't plan
     }
     errorsInAPI = 0; //Reset error counter
-    const events = res.data.items;
     //combinedLog('Got ' + events.length + ' events!' );
-    for (let event of events) {
+    for (let event of res.data.items) {
       const eventStart = new Date(event.start.dateTime);
       const eventEnd = new Date(event.end.dateTime);
       // Need to schedule here
