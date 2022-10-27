@@ -70,9 +70,6 @@ function combinedLog(message) {
   console.log(message);
   errlogfile.write(message + '\n')
 }
-
-
-
 // Load API Key & Cal ID from a local json file
 fs.readFile(API_KEY_PATH, (err, content) => {
   if (err) {
@@ -82,13 +79,9 @@ fs.readFile(API_KEY_PATH, (err, content) => {
   // Authorize a client with credentials, then call the Google Calendar API.
   const obj = JSON.parse(content);
   planEvents(obj.api_key, obj.google_cal_id); //Do a plan now
-  setInterval(planEvents, UPDATE_INTERVAL*60000, obj.api_key, obj.google_cal_id); //Replan
-
-  planEvents(); //Do a plan now
-  setInterval(planEvents, CAL_UPDATE_INTERVAL*60000); //Replan
+  setInterval(planEvents, CAL_UPDATE_INTERVAL*60000, obj.api_key, obj.google_cal_id); //Replan
   setInterval(doTempLoop, TEMP_UPDATE_INTERVAL*1000); //Check the temp
-  FlowSensor.watch(demandCallback);
-
+  FlowSensor.watch(demandCallback); //Start watching for demand
   combinedLog('New Session');
 });
 
