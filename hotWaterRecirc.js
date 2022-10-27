@@ -29,7 +29,9 @@ let errorsInAPI = 0; //Counter to limit requests to Google
 let calendarRequestedRecirc = false; //We are recirculating due to calendar
 let pumpOnState = false;
 let pumpOffTime = 0;
-let lastTemp = 0;
+let lastTemp = 0; //Last temp so we can do threshold
+let demandCounter = 0;
+let lastDemandTime = 0;
 
 process.on('SIGINT', _ => { //If interrupted, turn pump off
   RelayPin.writeSync(0);
@@ -39,10 +41,13 @@ process.on('SIGINT', _ => { //If interrupted, turn pump off
 });
 
 // Log file for testing purposes
-let errlogfile = fs.createWriteStream(ERR_LOG_FILE, {flags:'a'});
-let templogfile = fs.createWriteStream(TEMP_LOG_FILE, {flags:'a'});
-let demandlogfile = fs.createWriteStream(DEMAND_LOG_FILE, {flags:'a'});
-//Main Loop, we don't actually need to be doing this when pump is off
+const errlogfile = fs.createWriteStream(ERR_LOG_FILE, {flags:'a'});
+const templogfile = fs.createWriteStream(TEMP_LOG_FILE, {flags:'a'});
+const demandlogfile = fs.createWriteStream(DEMAND_LOG_FILE, {flags:'a'});
+//Main Loop, we don't actually need to be doing this when calender isn't
+// enabling circulation and pump off
+// We would need both pump on and calendar to enable
+// Pump off && not calender to disable...probably not worth it, no advantage
 function doTempLoop() {
 	const curTemp = Sensor.readSimpleF();
   if (!pumpOnState) { //If the Pump is Off
@@ -60,9 +65,8 @@ function doTempLoop() {
 }
 // Error logging function
 function combinedLog(message) {
-  let curDate = new Date();
-  let dateStr = curDate.toString();
-  message = dateStr.slice(0,dateStr.length-31) + ':' + curDate.getMilliseconds() + ': ' + message; //Prepend Time to message
+  const curDate = new Date();
+  message = curDate.toLocaleDateString() + ' ' + curDate.toLocaleTimeString() + ': ' + message; //Prepend Time to message
   console.log(message);
   errlogfile.write(message + '\n')
 }
@@ -158,13 +162,23 @@ function pumpOn() {
   RelayPin.writeSync(1);
   pumpOnState = true;
   setTimeout(failedToMeetTemp,TEMP_THRESHOLD_DELAY); //If we don't make temp, go off
-  combinedLog('Pump On');
+  //combinedLog('Pump On');
 }
 
 function demandCallback(err, state) {
-  combinedLog('Demand Trigger');
-  demandlogfile.write(Date.now()/1000 + ',\n'); //Posix Time
-  pumpOn(); //Demand Trigger
+  const now = Date.now();
+  if (demandCounter > 0 && now - lastDemandTime > 10000) { //If it's been 10s, reset
+    combinedLog('Demand Trigger Expired at ' + demandCounter);
+    demandCounter = 0;
+  } else if (demandCounter > 5) { //Look for 5 pulses within time to trigger
+    pumpOn(); //Demand Trigger
+    combinedLog('Demand Trigger');
+    demandlogfile.write(now/1000 + ',\n'); //Posix Time
+    demandCounter = 0; //Reset counter
+  } else {
+    demandCounter += 1;
+  }
+  lastDemandTime = now;
 }
 
 function watchForDemand() {
