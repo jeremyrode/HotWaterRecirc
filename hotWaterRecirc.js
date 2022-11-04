@@ -131,7 +131,6 @@ function planEvents(api_key, google_cal_id) { //Plan out the current interval
 }
 
 // Worker Functions
-
 function enableCalendarDemand() {
   calendarRequestedRecirc = true;
   combinedLog('Begin Calendar Demand');
